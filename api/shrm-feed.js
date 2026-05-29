@@ -22,13 +22,15 @@ export default async function handler(req, res) {
           const pubDate = (content.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1] || '';
           if (title) items.push({ title: title.replace(/<!\[CDATA\[|\]\]>/g, '').trim(), link: link.trim(), pubDate, source: source.name });
         }
-        return items.slice(0, 5);
+        return items.slice(0, 3);
       })
     );
 
-    const allItems = results
+    const balanced = results
       .filter(r => r.status === 'fulfilled')
-      .flatMap(r => r.value)
+      .flatMap(r => r.value);
+
+    const allItems = balanced
       .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate))
       .slice(0, 8);
 
