@@ -22,7 +22,7 @@ export default async function handler(req, res) {
           const pubDate = (content.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1] || '';
           if (title) items.push({ title: title.replace(/<!\[CDATA\[|\]\]>/g, '').trim(), link: link.trim(), pubDate, source: source.name });
         }
-        return items.slice(0, 3);
+        return items.slice(0, 2);
       })
     );
 
