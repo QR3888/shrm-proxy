@@ -17,7 +17,12 @@
 
 const ALLOWED_ORIGIN  = 'https://the-grey-gym-shrm-study-app.vercel.app';
 const ANTHROPIC_URL   = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
+const ANTHROPIC_MODEL_DEFAULT = 'claude-haiku-4-5-20251001';
+const ANTHROPIC_MODELS_ALLOWED = new Set([
+  'claude-haiku-4-5-20251001',
+  'claude-sonnet-4-5',
+  'claude-sonnet-4-6',
+]);
 const MAX_TOKENS_DEFAULT = 400;
 
 // Rate limit: 10 requests per IP per rolling 60-second window
@@ -130,7 +135,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid JSON body' });
   }
 
-  const { messages, system, max_tokens } = body || {};
+  const { messages, system, max_tokens, model } = body || {};
 
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages array is required' });
@@ -138,7 +143,11 @@ export default async function handler(req, res) {
   if (typeof system !== 'string' || !system.trim()) {
     return res.status(400).json({ error: 'system prompt string is required' });
   }
+  if (model !== undefined && !ANTHROPIC_MODELS_ALLOWED.has(model)) {
+    return res.status(400).json({ error: 'Invalid model' });
+  }
 
+  const resolvedModel     = model || ANTHROPIC_MODEL_DEFAULT;
   const resolvedMaxTokens = (Number.isInteger(max_tokens) && max_tokens > 0 && max_tokens <= 2048)
     ? max_tokens
     : MAX_TOKENS_DEFAULT;
@@ -153,7 +162,7 @@ export default async function handler(req, res) {
         'content-type':      'application/json',
       },
       body: JSON.stringify({
-        model:      ANTHROPIC_MODEL,
+        model:      resolvedModel,
         max_tokens: resolvedMaxTokens,
         system,
         messages,
