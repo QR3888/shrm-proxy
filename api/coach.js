@@ -15,7 +15,10 @@
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ALLOWED_ORIGIN  = 'https://the-grey-gym-shrm-study-app.vercel.app';
+const ALLOWED_ORIGINS = new Set([
+  'https://the-grey-gym-shrm-study-app.vercel.app',
+  'https://shrm.thegreygym.com',
+]);
 const ANTHROPIC_URL   = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL_DEFAULT = 'claude-haiku-4-5-20251001';
 const ANTHROPIC_MODELS_ALLOWED = new Set([
@@ -70,8 +73,11 @@ function isRateLimited(ip) {
 }
 
 // ── CORS headers helper ───────────────────────────────────────────────────────
-function setCorsHeaders(res) {
-  res.setHeader('Access-Control-Allow-Origin',  ALLOWED_ORIGIN);
+function setCorsHeaders(res, origin) {
+  // Reflect the request origin only if it is in the allowlist
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TGG-Auth');
   res.setHeader('Vary', 'Origin');
@@ -80,16 +86,16 @@ function setCorsHeaders(res) {
 // ── Handler ───────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   // ── CORS preflight ─────────────────────────────────────────────────────────
+  const origin = req.headers['origin'] || '';
   if (req.method === 'OPTIONS') {
-    setCorsHeaders(res);
+    setCorsHeaders(res, origin);
     return res.status(204).end();
   }
 
-  setCorsHeaders(res);
+  setCorsHeaders(res, origin);
 
   // ── Security 2: Origin check ───────────────────────────────────────────────
-  const origin = req.headers['origin'] || '';
-  if (origin !== ALLOWED_ORIGIN) {
+  if (!ALLOWED_ORIGINS.has(origin)) {
     console.warn('[coach] Rejected request from origin:', origin || '(none)');
     return res.status(403).json({ error: 'Forbidden' });
   }
