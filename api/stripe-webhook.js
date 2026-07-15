@@ -62,6 +62,15 @@ async function supabasePatchUsers(filter, patch) {
 const toIso = (unixSeconds) =>
   (typeof unixSeconds === 'number' ? new Date(unixSeconds * 1000).toISOString() : null);
 
+// Returns the subscription's current period end as an ISO timestamp, or null.
+// Recent Stripe API versions moved current_period_end off the subscription root
+// onto each subscription item, so we check the item first, then the root.
+function subPeriodEndIso(sub) {
+  if (!sub) return null;
+  const itemEnd = sub.items?.data?.[0]?.current_period_end;
+  return toIso(typeof itemEnd === 'number' ? itemEnd : sub.current_period_end);
+}
+
 const ACTIVE_STATUSES   = new Set(['active', 'trialing']);
 const INACTIVE_STATUSES = new Set(['canceled', 'unpaid', 'incomplete_expired']);
 
@@ -110,12 +119,14 @@ export default async function handler(req, res) {
           return res.status(200).json({ received: true });
         }
 
-        // Fetch the subscription to read its current period end.
+        // The session only references the subscription by id, so retrieve the
+        // full object to read its current period end. If this fails, periodEnd
+        // stays null and we still grant premium with everything else below.
         let periodEnd = null;
         if (session.subscription) {
           try {
             const sub = await stripe.subscriptions.retrieve(session.subscription);
-            periodEnd = toIso(sub.current_period_end);
+            periodEnd = subPeriodEndIso(sub);
           } catch (e) {
             console.warn('[webhook] could not retrieve subscription for period end:', e?.message || 'error');
           }
@@ -143,7 +154,7 @@ export default async function handler(req, res) {
       case 'customer.subscription.updated': {
         const sub   = event.data.object;
         const patch = {
-          subscription_period_end:           toIso(sub.current_period_end),
+          subscription_period_end:           subPeriodEndIso(sub),
           subscription_cancel_at_period_end: !!sub.cancel_at_period_end,
         };
         if (INACTIVE_STATUSES.has(sub.status))    patch.subscription_status = 'expired';
