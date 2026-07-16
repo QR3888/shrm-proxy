@@ -71,6 +71,17 @@ function subPeriodEndIso(sub) {
   return toIso(typeof itemEnd === 'number' ? itemEnd : sub.current_period_end);
 }
 
+// Returns true if the subscription is scheduled to cancel at period end.
+// Stripe deprecated cancel_at_period_end: a Customer Portal "cancel at period
+// end" is now expressed via cancel_at (a future timestamp) while the legacy
+// boolean stays false. Read cancel_at first, then fall back to the legacy flag
+// (same defensive pattern as subPeriodEndIso). Clicking "Don't cancel" sets
+// cancel_at back to null, so this correctly returns false again.
+function subCancelAtPeriodEnd(sub) {
+  if (!sub) return false;
+  return sub.cancel_at != null || sub.cancel_at_period_end === true;
+}
+
 const ACTIVE_STATUSES   = new Set(['active', 'trialing']);
 const INACTIVE_STATUSES = new Set(['canceled', 'unpaid', 'incomplete_expired']);
 
@@ -155,7 +166,7 @@ export default async function handler(req, res) {
         const sub   = event.data.object;
         const patch = {
           subscription_period_end:           subPeriodEndIso(sub),
-          subscription_cancel_at_period_end: !!sub.cancel_at_period_end,
+          subscription_cancel_at_period_end: subCancelAtPeriodEnd(sub),
         };
         if (INACTIVE_STATUSES.has(sub.status))    patch.subscription_status = 'expired';
         else if (ACTIVE_STATUSES.has(sub.status)) patch.subscription_status = 'premium';
@@ -170,7 +181,7 @@ export default async function handler(req, res) {
           console.warn('[webhook] customer.subscription.updated: no user row matched');
           return res.status(200).json({ received: true });
         }
-        console.log('[webhook] customer.subscription.updated: synced,', 'status=' + sub.status);
+        console.log('[webhook] customer.subscription.updated: synced,', 'status=' + sub.status + ', cancelAtPeriodEnd=' + patch.subscription_cancel_at_period_end);
         return res.status(200).json({ received: true });
       }
 
