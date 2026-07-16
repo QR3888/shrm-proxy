@@ -82,6 +82,18 @@ function subCancelAtPeriodEnd(sub) {
   return sub.cancel_at != null || sub.cancel_at_period_end === true;
 }
 
+// Derives the plan from the first subscription item's recurring billing interval
+// (same defensive item-first pattern as above). Never hardcode price IDs: those
+// differ between test and live mode, but the interval is identical in both. A
+// 'year' interval is annual, 'month' is monthly; anything else (missing,
+// unrecognised, or empty items) returns null so the caller can skip the write.
+function subPlan(sub) {
+  const interval = sub?.items?.data?.[0]?.price?.recurring?.interval;
+  if (interval === 'year')  return 'annual';
+  if (interval === 'month') return 'monthly';
+  return null;
+}
+
 const ACTIVE_STATUSES   = new Set(['active', 'trialing']);
 const INACTIVE_STATUSES = new Set(['canceled', 'unpaid', 'incomplete_expired']);
 
@@ -173,6 +185,12 @@ export default async function handler(req, res) {
         // Other statuses (e.g. past_due) leave subscription_status unchanged —
         // access is only revoked on real cancellation/deletion.
 
+        // Plan can change through the portal (e.g. annual to monthly). Only write
+        // it when we can positively derive it, so an unexpected payload never
+        // wipes a correct existing plan to null.
+        const _plan = subPlan(sub);
+        if (_plan) patch.subscription_plan = _plan;
+
         let updated = await supabasePatchUsers(`stripe_subscription_id=eq.${encodeURIComponent(sub.id)}`, patch);
         if (updated === 0 && sub.customer) {
           updated = await supabasePatchUsers(`stripe_customer_id=eq.${encodeURIComponent(sub.customer)}`, patch);
@@ -181,7 +199,7 @@ export default async function handler(req, res) {
           console.warn('[webhook] customer.subscription.updated: no user row matched');
           return res.status(200).json({ received: true });
         }
-        console.log('[webhook] customer.subscription.updated: synced,', 'status=' + sub.status + ', cancelAtPeriodEnd=' + patch.subscription_cancel_at_period_end);
+        console.log('[webhook] customer.subscription.updated: synced,', 'status=' + sub.status + ', cancelAtPeriodEnd=' + patch.subscription_cancel_at_period_end + ', plan=' + _plan);
         return res.status(200).json({ received: true });
       }
 
