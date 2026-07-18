@@ -26,10 +26,10 @@ const ALLOWED_ORIGINS = new Set([
   'https://shrm.thegreygym.com',
 ]);
 
-// Stripe TEST-mode price IDs. plan -> price mapping (subscription).
+// Stripe LIVE-mode price IDs. plan -> price mapping (subscription).
 const PRICE_IDS = {
-  monthly: 'price_1TtVfuHRbRG3VPj5V4jVyvkM',
-  annual:  'price_1TtVgcHRbRG3VPj5V7YeEWfB',
+  monthly: 'price_1TtVVeHRbRG3VPj53l5GP5cw',
+  annual:  'price_1TtVWRHRbRG3VPj5zMb6gDbv',
 };
 
 const SUCCESS_URL = 'https://shrm.thegreygym.com/?checkout=success';
