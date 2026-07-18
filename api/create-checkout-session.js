@@ -159,16 +159,16 @@ export default async function handler(req, res) {
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
+      ui_mode: 'embedded',
       line_items: [{ price: priceId, quantity: 1 }],
       customer_email: email,
       client_reference_id: userId,
       metadata: { userId, plan },
-      success_url: SUCCESS_URL,
-      cancel_url:  CANCEL_URL,
+      return_url: SUCCESS_URL + '&session_id={CHECKOUT_SESSION_ID}',
     });
 
-    // Return only the redirect URL — never the full session or anything sensitive
-    return res.status(200).json({ url: session.url });
+    // Return only the client_secret — never the full session or anything sensitive
+    return res.status(200).json({ clientSecret: session.client_secret });
 
   } catch (err) {
     // Log server-side only; never forward Stripe internals or the key to client
