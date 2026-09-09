@@ -28,8 +28,9 @@ const ALLOWED_ORIGINS = new Set([
 
 // Stripe LIVE-mode price IDs. plan -> price mapping (subscription).
 const PRICE_IDS = {
-  monthly: 'price_1TtVVeHRbRG3VPj53l5GP5cw',
-  annual:  'price_1TtVWRHRbRG3VPj5zMb6gDbv',
+  monthly:   'price_1TtVVeHRbRG3VPj53l5GP5cw',
+  quarterly: 'price_1UDo4EHRbRG3VPj5aMgMkW6q',
+  annual:    'price_1TtVWRHRbRG3VPj5zMb6gDbv',
 };
 
 const SUCCESS_URL = 'https://shrm.thegreygym.com/?checkout=success';
@@ -144,7 +145,7 @@ export default async function handler(req, res) {
 
   const priceId = PRICE_IDS[plan];
   if (!priceId) {
-    return res.status(400).json({ error: 'plan must be "monthly" or "annual"' });
+    return res.status(400).json({ error: 'plan must be "monthly", "quarterly", or "annual"' });
   }
   if (typeof userId !== 'string' || !userId.trim()) {
     return res.status(400).json({ error: 'userId string is required' });
