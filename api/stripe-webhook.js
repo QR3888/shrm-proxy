@@ -88,8 +88,11 @@ function subCancelAtPeriodEnd(sub) {
 // 'year' interval is annual, 'month' is monthly; anything else (missing,
 // unrecognised, or empty items) returns null so the caller can skip the write.
 function subPlan(sub) {
-  const interval = sub?.items?.data?.[0]?.price?.recurring?.interval;
+  const recurring = sub?.items?.data?.[0]?.price?.recurring;
+  const interval  = recurring?.interval;
+  const count     = recurring?.interval_count;
   if (interval === 'year')  return 'annual';
+  if (interval === 'month' && count === 3) return 'quarterly';
   if (interval === 'month') return 'monthly';
   return null;
 }
