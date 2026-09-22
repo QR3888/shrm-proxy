@@ -49,12 +49,13 @@ async function supabasePatchUsers(filter, patch) {
     },
     body: JSON.stringify(patch),
   });
-  if (!resp.ok) {
-    // Log status only (never the key or full response); throw so the caller
-    // returns 500 and Stripe retries.
-    console.error('[webhook] Supabase PATCH failed with status:', resp.status);
-    throw new Error('Supabase write failed');
-  }
+      if (!resp.ok) {
+      // Log status only (never the key or full response); throw so the caller
+      // returns 500 and Stripe retries.
+      const detail = await resp.text().catch(() => '');
+      console.error('[webhook] Supabase PATCH failed with status:', resp.status, 'filter:', filter, 'body:', detail);
+      throw new Error('Supabase write failed');
+    }
   const rows = await resp.json().catch(() => []);
   return Array.isArray(rows) ? rows.length : 0;
 }
