@@ -49,15 +49,30 @@ async function supabasePatchUsers(filter, patch) {
     },
     body: JSON.stringify(patch),
   });
-      if (!resp.ok) {
-      // Log status only (never the key or full response); throw so the caller
-      // returns 500 and Stripe retries.
-      const detail = await resp.text().catch(() => '');
-      console.error('[webhook] Supabase PATCH failed with status:', resp.status, 'filter:', filter, 'body:', detail);
-      throw new Error('Supabase write failed');
-    }
+  if (!resp.ok) {
+    // Log status and the Supabase error body (never the key); throw so the
+    // caller returns 500 and Stripe retries.
+    const detail = await resp.text().catch(() => '');
+    console.error('[webhook] Supabase PATCH failed with status:', resp.status, 'filter:', filter, 'body:', detail);
+    throw new Error('Supabase write failed');
+  }
   const rows = await resp.json().catch(() => []);
   return Array.isArray(rows) ? rows.length : 0;
+}
+
+// Patches the user matched by an invoice's subscription id, falling back to its
+// customer id. Returns the number of rows updated (0 means no user matched,
+// which is logged but never treated as an error — see the handlers below).
+async function patchByCustomerOrSub(obj, patch) {
+  const subId = typeof obj?.subscription === 'string' ? obj.subscription : obj?.subscription?.id;
+  if (subId) {
+    const n = await supabasePatchUsers(`stripe_subscription_id=eq.${encodeURIComponent(subId)}`, patch);
+    if (n > 0) return n;
+  }
+  if (obj?.customer) {
+    return await supabasePatchUsers(`stripe_customer_id=eq.${encodeURIComponent(obj.customer)}`, patch);
+  }
+  return 0;
 }
 
 const toIso = (unixSeconds) =>
@@ -166,6 +181,7 @@ export default async function handler(req, res) {
           subscription_plan:                 plan,
           subscription_period_end:           periodEnd,
           subscription_cancel_at_period_end: false,
+          payment_issue:                     false,
         });
 
         if (updated === 0) {
@@ -226,9 +242,33 @@ export default async function handler(req, res) {
         return res.status(200).json({ received: true });
       }
 
-      // ── Payment failed: log only, do NOT revoke (Stripe retries) ───────────
+      // ── Payment failed: flag for email exclusion, do NOT revoke access ─────
+      // Stripe keeps retrying billing, so app access is deliberately retained.
+      // payment_issue only excludes the customer from paid marketing emails.
       case 'invoice.payment_failed': {
-        console.warn('[webhook] invoice.payment_failed — access retained; Stripe will retry billing');
+        const inv = event.data.object;
+        const updated = await patchByCustomerOrSub(inv, { payment_issue: true });
+        console.warn('[webhook] invoice.payment_failed — access retained, payment_issue set;', 'rowsMatched=' + updated);
+        return res.status(200).json({ received: true });
+      }
+
+      // ── Payment recovered: clear the flag ──────────────────────────────────
+      case 'invoice.payment_succeeded': {
+        const inv = event.data.object;
+        const updated = await patchByCustomerOrSub(inv, { payment_issue: false });
+        console.log('[webhook] invoice.payment_succeeded — payment_issue cleared;', 'rowsMatched=' + updated);
+        return res.status(200).json({ received: true });
+      }
+
+      // ── Refund: flag for email exclusion, do NOT revoke access ─────────────
+      // Access decisions stay with the subscription events. A refunded customer
+      // must not receive paid marketing email.
+      case 'charge.refunded': {
+        const charge  = event.data.object;
+        const updated = charge.customer
+          ? await supabasePatchUsers(`stripe_customer_id=eq.${encodeURIComponent(charge.customer)}`, { payment_issue: true })
+          : 0;
+        console.warn('[webhook] charge.refunded — payment_issue set;', 'rowsMatched=' + updated);
         return res.status(200).json({ received: true });
       }
 
