@@ -76,6 +76,29 @@ async function patchByCustomerOrSub(obj, patch) {
   return 0;
 }
 
+// Records when paid access first began, once and only once.
+//
+// The filter carries `paid_started_at=is.null`, so PostgREST updates the row
+// only while the column is still empty. A repeat purchase, a resent webhook or
+// a plan change can therefore never overwrite the original date. Fire-and-
+// forget: this value is only used for email timing, so a failure here must
+// never fail the payment.
+async function recordPaidStart(userId, startedAtIso) {
+  try {
+    if (!startedAtIso) {
+      console.warn('[webhook] no paid start timestamp available — skipping paid_started_at');
+      return;
+    }
+    const n = await supabasePatchUsers(
+      `id=eq.${encodeURIComponent(userId)}&paid_started_at=is.null`,
+      { paid_started_at: startedAtIso }
+    );
+    console.log('[webhook] paid_started_at', n > 0 ? 'recorded: ' + startedAtIso : 'already set — left unchanged');
+  } catch (e) {
+    console.error('[webhook] paid_started_at write failed (payment unaffected):', e?.message || 'error');
+  }
+}
+
 // ── Systeme.io paid tagging ───────────────────────────────────────────────────
 // Applies the matching "SHRM App - Paid <Plan>" tag to the customer's contact.
 // Tags are resolved by NAME at runtime, so renaming or recreating a tag in
@@ -239,17 +262,22 @@ export default async function handler(req, res) {
         }
 
         // The session only references the subscription by id, so retrieve the
-        // full object to read its current period end. If this fails, periodEnd
-        // stays null and we still grant premium with everything else below.
-        let periodEnd = null;
+        // full object to read its current period end and its created date. If
+        // this fails both stay null and we still grant premium below.
+        let periodEnd    = null;
+        let paidStartIso = null;
         if (session.subscription) {
           try {
             const sub = await stripe.subscriptions.retrieve(session.subscription);
-            periodEnd = subPeriodEndIso(sub);
+            periodEnd    = subPeriodEndIso(sub);
+            paidStartIso = toIso(sub.created);
           } catch (e) {
             console.warn('[webhook] could not retrieve subscription for period end:', e?.message || 'error');
           }
         }
+        // Fall back to the checkout session's own created date if the
+        // subscription could not be read.
+        if (!paidStartIso) paidStartIso = toIso(session.created);
 
         const updated = await supabasePatchUsers(`id=eq.${encodeURIComponent(userId)}`, {
           subscription_status:               'premium',
@@ -267,6 +295,9 @@ export default async function handler(req, res) {
           return res.status(200).json({ received: true });
         }
         console.log('[webhook] checkout.session.completed: premium granted');
+
+        // Record when paid access began, once only. Never overwrites.
+        await recordPaidStart(userId, paidStartIso);
 
         // Apply the paid tag in Systeme.io. Awaited so it completes before the
         // function is frozen, but it can never throw — see applyPaidTag.
