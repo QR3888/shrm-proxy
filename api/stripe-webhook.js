@@ -12,8 +12,9 @@
  *     STRIPE_WEBHOOK_SECRET over the RAW request body.
  *
  * All secrets (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, SUPABASE_URL,
- * SUPABASE_SERVICE_ROLE_KEY) come from environment variables only and are never
- * logged or returned. We log only the event type and the outcome.
+ * SUPABASE_SERVICE_ROLE_KEY, SYSTEME_IO_API_KEY) come from environment
+ * variables only and are never logged or returned. We log only the event type
+ * and the outcome.
  */
 
 import Stripe from 'stripe';
@@ -73,6 +74,82 @@ async function patchByCustomerOrSub(obj, patch) {
     return await supabasePatchUsers(`stripe_customer_id=eq.${encodeURIComponent(obj.customer)}`, patch);
   }
   return 0;
+}
+
+// ── Systeme.io paid tagging ───────────────────────────────────────────────────
+// Applies the matching "SHRM App - Paid <Plan>" tag to the customer's contact.
+// Tags are resolved by NAME at runtime, so renaming or recreating a tag in
+// Systeme.io does not require a code change here.
+//
+// This is deliberately fire-and-forget: every failure is logged and swallowed,
+// never thrown. A Systeme.io outage must never fail the webhook, because a 500
+// makes Stripe retry the whole purchase event and can leave a paying customer
+// without access (as happened on 22 Sep 2026).
+const SYSTEME_API_URL = 'https://api.systeme.io/api';
+
+const PAID_TAG_NAMES = {
+  monthly:   'SHRM App - Paid Monthly',
+  quarterly: 'SHRM App - Paid Quarterly',
+  annual:    'SHRM App - Paid Annual',
+};
+
+async function systemeRequest(path, options = {}) {
+  const resp = await fetch(`${SYSTEME_API_URL}${path}`, {
+    ...options,
+    headers: {
+      'X-API-Key':    process.env.SYSTEME_IO_API_KEY,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  const text = await resp.text();
+  if (!resp.ok) throw new Error(`Systeme.io ${resp.status}: ${text.slice(0, 200)}`);
+  if (!text) return null;
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+async function applyPaidTag(email, plan) {
+  try {
+    if (!process.env.SYSTEME_IO_API_KEY) {
+      console.warn('[webhook] SYSTEME_IO_API_KEY not configured — skipping paid tag');
+      return;
+    }
+    const tagName = PAID_TAG_NAMES[plan];
+    if (!tagName) {
+      console.warn('[webhook] no paid tag mapped for plan:', plan);
+      return;
+    }
+    if (!email) {
+      console.warn('[webhook] no email on the checkout session — skipping paid tag');
+      return;
+    }
+
+    // Resolve the tag id by name.
+    const tags = await systemeRequest('/tags');
+    const list = Array.isArray(tags?.items) ? tags.items : (Array.isArray(tags) ? tags : []);
+    const tag  = list.find(t => String(t?.name).trim().toLowerCase() === tagName.toLowerCase());
+    if (!tag?.id) {
+      console.warn('[webhook] paid tag not found in Systeme.io:', tagName);
+      return;
+    }
+
+    // Find the contact by email.
+    const contacts  = await systemeRequest(`/contacts?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+    const contactId = contacts?.items?.[0]?.id;
+    if (!contactId) {
+      console.warn('[webhook] no Systeme.io contact found for this purchase — paid tag not applied');
+      return;
+    }
+
+    await systemeRequest(`/contacts/${contactId}/tags`, {
+      method: 'POST',
+      body: JSON.stringify({ tagId: tag.id }),
+    });
+    console.log('[webhook] paid tag applied:', tagName);
+  } catch (e) {
+    // Never rethrow — tagging must not affect the payment outcome.
+    console.error('[webhook] paid tagging failed (payment unaffected):', e?.message || 'error');
+  }
 }
 
 const toIso = (unixSeconds) =>
@@ -190,6 +267,12 @@ export default async function handler(req, res) {
           return res.status(200).json({ received: true });
         }
         console.log('[webhook] checkout.session.completed: premium granted');
+
+        // Apply the paid tag in Systeme.io. Awaited so it completes before the
+        // function is frozen, but it can never throw — see applyPaidTag.
+        const email = session.customer_details?.email || session.customer_email || null;
+        await applyPaidTag(email, plan);
+
         return res.status(200).json({ received: true });
       }
 
